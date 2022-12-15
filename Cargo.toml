@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 ndarray = "0.15.6"
+ggez = {version = "0.8.1", default-features = false}

@@ -3,7 +3,9 @@ use ggez::graphics::{Rect, DrawParam, Quad, Color};
 use ggez::input::{mouse, keyboard};
 mod life_api;
 
-const TARGET_FPS : u32 = 4;
+const TARGET_FPS : u32 = 30;
+const TARGET_GRID_UPDATE_RATE : u32 = 4;
+const GRID_UPDATE_TIMEOUT : f32 = 1.0 / TARGET_GRID_UPDATE_RATE as f32;
 const SCREEN_SIZE: (f32, f32) = (800.0, 800.0);
 const GRID_SIZE: life_api::Size = (10, 10);
 const CELL_SIZE: (f32, f32) = (
@@ -27,8 +29,17 @@ fn draw_pixel(canvas: &mut ggez::graphics::Canvas, position: Position, color: gg
 	)
 }
 
+fn get_grid_pos(window_pos: (f32, f32)) -> (usize, usize) {
+			(
+				(window_pos.0 / SCREEN_SIZE.0 * GRID_SIZE.0 as f32) as usize,
+				(window_pos.1 / SCREEN_SIZE.1 * GRID_SIZE.1 as f32) as usize
+			)
+}
+
 struct GameState {
 	is_paused: bool,
+	grid_update_timeout: f32,
+	pressing_click: Option<mouse::MouseButton>,
 	grid: life_api::Board,
 }
 
@@ -48,6 +59,8 @@ impl GameState {
 		];
 		Self {
 			is_paused: true,
+			grid_update_timeout: GRID_UPDATE_TIMEOUT,
+			pressing_click: None,
 			grid: life_api::Board::from(arr),
 		}
 	}
@@ -99,18 +112,31 @@ impl GameState {
 					.color(Color::RED));
 		}
 	}
+
+	fn create_pixel(&mut self, grid_pos: (usize, usize)) {
+		self
+		.grid
+		.get_array_mut()[[grid_pos.1, grid_pos.0]] = 1;
+	}
+
+	fn delete_pixel(&mut self, grid_pos: (usize, usize)) {
+		self
+		.grid
+		.get_array_mut()[[grid_pos.1, grid_pos.0]] = 0;
+	}
 }
 
 impl EventHandler<ggez::GameError> for GameState {
 	fn update(&mut self, ctx: &mut ggez::Context) -> GameResult {
-		// Don't update if the process is too quick
-		// Don't update if the game is paused
-		if !ctx.time.check_update_time(TARGET_FPS) || self.is_paused {
-			return Ok(());
-		}
+		while ctx.time.check_update_time(TARGET_FPS) {
+			let delta = 1.0 / TARGET_FPS as f32;
+			self.grid_update_timeout -= delta;
 
-		// Update the grid
-		self.grid.update();
+			if self.grid_update_timeout < 0.0 && !self.is_paused {
+				self.grid.update();
+				self.grid_update_timeout = GRID_UPDATE_TIMEOUT;
+			}
+		}
 
 		Ok(())
 	}
@@ -155,23 +181,62 @@ impl EventHandler<ggez::GameError> for GameState {
 			&mut self,
 			_ctx: &mut ggez::Context,
 			button: ggez::event::MouseButton,
-			x: f32,
-			y: f32,
+			_x: f32,
+			_y: f32,
 		) -> Result<(), ggez::GameError> {
-			let grid_pos = (
-				(x / SCREEN_SIZE.0 * GRID_SIZE.0 as f32) as usize,
-				(y / SCREEN_SIZE.1 * GRID_SIZE.1 as f32) as usize
-			);
+			let grid_pos = get_grid_pos((_x, _y));
 		match button {
 			mouse::MouseButton::Left => {
-				let mut board = self.grid.get_array_mut();
-				board[[grid_pos.1, grid_pos.0]] = 1;
+				self.pressing_click = Some(mouse::MouseButton::Left);
+				self.create_pixel(grid_pos);
 			},
 			mouse::MouseButton::Right => {
-				let mut board = self.grid.get_array_mut();
-				board[[grid_pos.1, grid_pos.0]] = 0;
-			}
+				self.pressing_click = Some(mouse::MouseButton::Right);
+				self.delete_pixel(grid_pos);
+			},
 			_ => {}
+		}
+
+		Ok(())
+	}
+
+	fn mouse_button_up_event(
+			&mut self,
+			_ctx: &mut ggez::Context,
+			_button: ggez::event::MouseButton,
+			_x: f32,
+			_y: f32,
+		) -> Result<(), ggez::GameError> {
+		match &self.pressing_click {
+			Some(key) => {
+				if *key == _button {
+					self.pressing_click = None;
+				}
+			},
+			None => {}
+		}
+
+		Ok(())
+	}
+
+	fn mouse_motion_event(
+			&mut self,
+			_ctx: &mut ggez::Context,
+			_x: f32,
+			_y: f32,
+			_dx: f32,
+			_dy: f32,
+		) -> Result<(), ggez::GameError> {
+		match &self.pressing_click {
+			Some(key) => {
+				let grid_pos = get_grid_pos((_x, _y));
+				match key {
+					mouse::MouseButton::Left => self.create_pixel(grid_pos),
+					mouse::MouseButton::Right => self.delete_pixel(grid_pos),
+					_ => {}
+				}
+			},
+			None => {}
 		}
 
 		Ok(())
